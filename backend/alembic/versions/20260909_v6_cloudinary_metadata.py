@@ -10,17 +10,22 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # Create any missing tables without touching existing tables or rows. This
+    # keeps partially initialized local/PostgreSQL databases migratable.
+    from app.db import Base
+    from app import models  # noqa: F401
+    Base.metadata.create_all(bind=bind)
     inspector = inspect(bind)
     if not inspector.get_table_names():
-        from app.db import Base
-        from app import models  # noqa: F401
-        Base.metadata.create_all(bind=bind)
         return
 
     additions = {
         "users": {"email": "VARCHAR(255)", "profile_picture_url": "TEXT", "updated_at": "TIMESTAMP"},
         "songs": {
-            "genre": "VARCHAR(60)", "description": "TEXT", "duration_seconds": "FLOAT", "is_active": "BOOLEAN DEFAULT TRUE",
+            "album": "VARCHAR(120)", "mood": "VARCHAR(60)", "genre": "VARCHAR(60)", "description": "TEXT",
+            "duration": "FLOAT", "duration_seconds": "FLOAT", "song_type": "VARCHAR(20) DEFAULT 'normal'",
+            "is_active": "BOOLEAN DEFAULT TRUE", "is_featured": "BOOLEAN DEFAULT FALSE", "is_published": "BOOLEAN DEFAULT TRUE",
+            "audio_object_path": "TEXT", "cover_object_path": "TEXT",
             "audio_url": "TEXT", "audio_public_id": "TEXT", "cover_url": "TEXT",
             "cover_public_id": "TEXT", "release_at": "TIMESTAMP", "updated_at": "TIMESTAMP",
         },

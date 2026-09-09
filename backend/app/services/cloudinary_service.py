@@ -66,14 +66,22 @@ def _upload(data: bytes, *, folder: str, content_type: str, resource_type: str) 
         BytesIO(data),
         **options,
     )
+    secure_url = str(result.get("secure_url") or result["url"])
+    if secure_url.startswith("http://"):
+        secure_url = "https://" + secure_url[len("http://"):]
+    if not secure_url.startswith("https://"):
+        raise RuntimeError("Cloudinary did not return a secure HTTPS URL")
     return CloudinaryAsset(
         public_id=str(result["public_id"]),
-        secure_url=str(result.get("secure_url") or result["url"]),
+        secure_url=secure_url,
         resource_type=resource_type,
     )
 
 
 def upload_audio(data: bytes, *, folder: str, content_type: str = "audio/mpeg") -> CloudinaryAsset:
+    # Cloudinary delivers audio through its video resource type. This is the
+    # provider-supported resource type for MP3/WAV/etc.; it is not a local
+    # Render file or a generic raw upload.
     return _upload(data, folder=folder, content_type=content_type, resource_type="video")
 
 
@@ -114,7 +122,10 @@ def delete_asset(public_id: str | None, *, resource_type: str | None = None) -> 
                 resource_type=kind,
                 invalidate=True,
             )
-            if result.get("result") in {"ok", "not found"}:
+            outcome = result.get("result")
+            if outcome == "ok":
+                return
+            if outcome == "not found" and resource_type is not None:
                 return
         except Exception as exc:  # pragma: no cover - provider-specific errors
             last_error = exc

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/api_client.dart';
+import '../core/player_service.dart';
 import '../models/eightd_playlist.dart';
 import '../models/user_8d_creation.dart';
 import '../widgets/playlist_animations.dart';
@@ -19,7 +19,7 @@ class _EightDLibraryScreenState extends State<EightDLibraryScreen>
   late final TabController tabs;
   late Future<List<User8DCreation>> songsFuture;
   late Future<List<EightDPlaylistSummary>> playlistsFuture;
-  final player = AudioPlayer();
+  final player = PlayerService.instance.player;
   int? playingId;
 
   static const accent = Color(0xFF704B7A);
@@ -45,7 +45,6 @@ class _EightDLibraryScreenState extends State<EightDLibraryScreen>
   @override
   void dispose() {
     tabs.dispose();
-    player.dispose();
     super.dispose();
   }
 
@@ -327,7 +326,7 @@ class EightDPlaylistDetailScreen extends StatefulWidget {
 class _EightDPlaylistDetailScreenState
     extends State<EightDPlaylistDetailScreen> {
   late Future<EightDPlaylistDetail> future;
-  final player = AudioPlayer();
+  final player = PlayerService.instance.player;
   int? playingId;
 
   static const accent = Color(0xFF704B7A);
@@ -349,7 +348,6 @@ class _EightDPlaylistDetailScreenState
 
   @override
   void dispose() {
-    player.dispose();
     super.dispose();
   }
 

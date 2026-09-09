@@ -24,13 +24,24 @@ String friendlyApiError(Object error) {
 
 class ApiClient {
   static const requestTimeout = Duration(seconds: 10);
-  // Production build example:
+  // Always supply this at build/run time. No laptop/LAN fallback belongs in
+  // a production binary:
   // flutter build apk --dart-define=API_BASE_URL=https://your-api-domain.com
-  // A public HTTPS backend removes any same-Wi-Fi/laptop dependency.
-  static const String baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8000',
-  );
+  static const String _configuredBaseUrl =
+      String.fromEnvironment('API_BASE_URL');
+
+  static String get baseUrl {
+    final value = _configuredBaseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+    if (value.isEmpty) {
+      throw StateError(
+          'API_BASE_URL is required. Pass --dart-define=API_BASE_URL=https://...');
+    }
+    final uri = Uri.tryParse(value);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      throw StateError('API_BASE_URL must be an absolute URL');
+    }
+    return value;
+  }
 
   String? token;
   final CatalogStore catalogStore = CatalogStore();
@@ -84,11 +95,17 @@ class ApiClient {
         .toList();
   }
 
-  Future<CatalogSnapshot> loadCatalog({String q = '', String category = '', String? songType}) {
+  Future<CatalogSnapshot> loadCatalog({
+    String q = '',
+    String category = '',
+    String? songType,
+    void Function(CatalogSnapshot snapshot)? onStatus,
+  }) {
     final isRootCatalog = q.trim().isEmpty && category.trim().isEmpty && songType == null;
     return catalogStore.load(
       () => songs(q: q, category: category, songType: songType),
       cacheResponse: isRootCatalog,
+      onStatus: onStatus,
     );
   }
 

@@ -1,9 +1,9 @@
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/api_client.dart';
+import '../core/player_service.dart';
 import '../models/user_8d_creation.dart';
 
 class Create8DScreen extends StatefulWidget {
@@ -16,7 +16,7 @@ class Create8DScreen extends StatefulWidget {
 
 class _Create8DScreenState extends State<Create8DScreen> {
   final title = TextEditingController();
-  final player = AudioPlayer();
+  final player = PlayerService.instance.player;
   PlatformFile? picked;
   Uint8List? audioBytes;
   User8DCreation? result;
@@ -44,7 +44,6 @@ class _Create8DScreenState extends State<Create8DScreen> {
   @override
   void dispose() {
     title.dispose();
-    player.dispose();
     super.dispose();
   }
 

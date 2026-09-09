@@ -30,9 +30,19 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-ensure_media_dirs()
-if not settings.uses_s3 and not settings.uses_supabase:
-    app.mount("/media", StaticFiles(directory=settings.media_root), name="media")
+def _mount_local_media(application: FastAPI) -> None:
+    """Expose media only for the local filesystem backend.
+
+    Cloudinary/S3/Supabase assets are served by their providers. Render's
+    filesystem is ephemeral and must not be required for a cloud deployment.
+    """
+    if settings.storage_backend.strip().lower() != "local":
+        return
+    ensure_media_dirs()
+    application.mount("/media", StaticFiles(directory=settings.media_root), name="media")
+
+
+_mount_local_media(app)
 app.include_router(auth.router)
 app.include_router(songs.router)
 app.include_router(songs.search_router)

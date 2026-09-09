@@ -24,31 +24,46 @@ class CatalogStore {
     Future<List<Song>> Function() request, {
     bool allowRetry = true,
     bool cacheResponse = true,
+    void Function(CatalogSnapshot snapshot)? onStatus,
   }) async {
     Object? lastError;
+    final cached = cacheResponse ? await _read() : const <Song>[];
+    onStatus?.call(CatalogSnapshot(
+      cached.isEmpty ? CatalogStatus.loading : CatalogStatus.cachedData,
+      cached,
+    ));
     final delays = allowRetry
         ? const [Duration.zero, Duration(seconds: 2), Duration(seconds: 4), Duration(seconds: 8), Duration(seconds: 12)]
         : const [Duration.zero];
-    for (final delay in delays) {
+    for (var attempt = 0; attempt < delays.length; attempt++) {
+      final delay = delays[attempt];
       if (delay > Duration.zero) await Future<void>.delayed(delay);
+      if (attempt > 0 || cached.isNotEmpty) {
+        onStatus?.call(CatalogSnapshot(CatalogStatus.connecting, cached));
+      }
       try {
         final songs = await request();
         if (cacheResponse) await _save(songs);
-        return CatalogSnapshot(
+        final snapshot = CatalogSnapshot(
           songs.isEmpty ? CatalogStatus.realEmpty : CatalogStatus.success,
           songs,
         );
+        onStatus?.call(snapshot);
+        return snapshot;
       } catch (error) {
         lastError = error;
+        onStatus?.call(CatalogSnapshot(CatalogStatus.connecting, cached));
       }
     }
 
-    final cached = await _read();
-    if (cached.isNotEmpty) return CatalogSnapshot(CatalogStatus.cachedData, cached);
-    return CatalogSnapshot(
+    final snapshot = cached.isNotEmpty
+        ? CatalogSnapshot(CatalogStatus.cachedData, cached)
+        : CatalogSnapshot(
       lastError == null ? CatalogStatus.offline : CatalogStatus.error,
       const [],
     );
+    onStatus?.call(snapshot);
+    return snapshot;
   }
 
   Future<void> _save(List<Song> songs) async {

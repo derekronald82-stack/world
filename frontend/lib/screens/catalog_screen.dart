@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/api_client.dart';
+import '../core/catalog_store.dart';
 import '../core/local_library_store.dart';
 import '../models/song.dart';
 import 'player_screen.dart';
@@ -23,7 +24,8 @@ class CatalogScreen extends StatefulWidget {
 }
 
 class _CatalogScreenState extends State<CatalogScreen> {
-  late Future<List<Song>> songsFuture;
+  late Future<CatalogSnapshot> songsFuture;
+  CatalogStatus catalogStatus = CatalogStatus.loading;
 
   bool get isEightD => widget.songType == '8d';
 
@@ -34,8 +36,16 @@ class _CatalogScreenState extends State<CatalogScreen> {
   }
 
   void refresh() {
-    final request = widget.api.songs(songType: widget.songType);
-    setState(() => songsFuture = request);
+    final request = widget.api.loadCatalog(
+      songType: widget.songType,
+      onStatus: (snapshot) {
+        if (mounted) setState(() => catalogStatus = snapshot.status);
+      },
+    );
+    setState(() {
+      songsFuture = request;
+      catalogStatus = CatalogStatus.loading;
+    });
   }
 
   Future<void> refreshAsync() async {
@@ -65,17 +75,24 @@ class _CatalogScreenState extends State<CatalogScreen> {
       appBar: AppBar(
           title:
               Text(title, style: const TextStyle(fontWeight: FontWeight.w900))),
-      body: FutureBuilder<List<Song>>(
+      body: FutureBuilder<CatalogSnapshot>(
         future: songsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
+            if (catalogStatus == CatalogStatus.connecting) {
+              return const Center(child: Text('Connecting to Catws Songs...'));
+            }
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
             return const Center(
                 child: Text('Unable to connect to Catws Songs.'));
           }
-          final songs = snapshot.data ?? <Song>[];
+          final catalog = snapshot.data;
+          if (catalog != null && catalog.isConnecting && catalog.songs.isEmpty) {
+            return const Center(child: Text('Connecting to Catws Songs...'));
+          }
+          final songs = catalog?.songs ?? <Song>[];
           if (songs.isEmpty) {
             return Center(
                 child: Text(isEightD

@@ -33,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String activeMood = '';
   List<String> categories = const ['Podcasts', 'Feel good', 'Relax', 'Romance'];
   List<Song> loadedSongs = [];
+  CatalogStatus catalogStatus = CatalogStatus.loading;
   Timer? refreshTimer;
   Timer? searchTimer;
 
@@ -81,9 +82,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void refresh() {
-    final request = widget.auth.api.loadCatalog(q: search.text, category: activeMood);
+    final request = widget.auth.api.loadCatalog(
+      q: search.text,
+      category: activeMood,
+      onStatus: (snapshot) {
+        if (!mounted) return;
+        setState(() {
+          catalogStatus = snapshot.status;
+          if (snapshot.songs.isNotEmpty) loadedSongs = snapshot.songs;
+          if (currentSong == null && snapshot.songs.isNotEmpty) {
+            currentSong = snapshot.songs.first;
+          }
+        });
+      },
+    );
     setState(() {
       future = request;
+      catalogStatus = CatalogStatus.loading;
     });
     request.then((snapshot) {
       if (!mounted) return;
@@ -416,8 +431,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     child: FutureBuilder<CatalogSnapshot>(
                       future: future,
                       builder: (context, snap) {
-                        if (snap.connectionState != ConnectionState.done) {
-                          return const Padding(
+        if (snap.connectionState != ConnectionState.done) {
+          if (catalogStatus == CatalogStatus.connecting && loadedSongs.isEmpty) {
+            return _errorState('Connecting to Catws Songs...');
+          }
+          if (loadedSongs.isNotEmpty) {
+            return _catalogSections(
+              loadedSongs,
+              showConnecting: catalogStatus == CatalogStatus.connecting,
+            );
+          }
+          return const Padding(
                             padding: EdgeInsets.only(top: 90),
                             child: Center(
                                 child:
@@ -441,34 +465,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     : 'No songs matched “${search.text.trim()}”.',
                           );
                         }
-                        final featured =
-                            songs.where((s) => s.isFeatured).toList();
-                        final hot = featured.isNotEmpty ? featured : songs;
-                        final dance = songs.take(8).toList();
-                        final newReleases = songs.reversed.take(8).toList();
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 210),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _section(
-                                eyebrow: 'DANCE YOUR STRESS AWAY',
-                                title: 'Dancing on your own',
-                                songs: dance,
-                              ),
-                              _section(
-                                eyebrow: "MUSIC THAT'S HOT AND HAPPENING",
-                                title: "India's biggest hits",
-                                songs: hot,
-                              ),
-                              _section(
-                                eyebrow: 'FRESH FOR YOU',
-                                title: 'New releases',
-                                songs: newReleases,
-                              ),
-                            ],
-                          ),
-                        );
+                        return _catalogSections(songs);
                       },
                     ),
                   ),
@@ -479,6 +476,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Positioned(left: 0, right: 0, bottom: 0, child: _bottomDock()),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _catalogSections(List<Song> songs, {bool showConnecting = false}) {
+    final featured = songs.where((s) => s.isFeatured).toList();
+    final hot = featured.isNotEmpty ? featured : songs;
+    final dance = songs.take(8).toList();
+    final newReleases = songs.reversed.take(8).toList();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 210),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showConnecting)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Text('Connecting to Catws Songs...',
+                  style: TextStyle(color: Color(0xFF8B7771), fontWeight: FontWeight.w700)),
+            ),
+          _section(
+            eyebrow: 'DANCE YOUR STRESS AWAY',
+            title: 'Dancing on your own',
+            songs: dance,
+          ),
+          _section(
+            eyebrow: "MUSIC THAT'S HOT AND HAPPENING",
+            title: "India's biggest hits",
+            songs: hot,
+          ),
+          _section(
+            eyebrow: 'FRESH FOR YOU',
+            title: 'New releases',
+            songs: newReleases,
+          ),
+        ],
       ),
     );
   }

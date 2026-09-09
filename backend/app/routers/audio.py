@@ -17,6 +17,7 @@ from ..services.audio_processor import convert_to_8d
 from ..services.storage import (
     delete_relative,
     get_signed_url,
+    get_public_url,
     presigned_download_url,
     save_upload,
 )
@@ -147,6 +148,8 @@ async def create_personal_8d(
             title=title.strip(),
             source_filename=(audio.filename or "audio")[:255],
             output_path=output_path,
+            output_url=get_public_url(output_path, kind="audio"),
+            output_public_id=output_path if settings.uses_cloudinary else None,
             saved_to_catws=False,
         )
         db.add(row)

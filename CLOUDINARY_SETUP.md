@@ -4,7 +4,7 @@ Create a Cloudinary account and configure the FastAPI service with:
 
 ```env
 STORAGE_BACKEND=cloudinary
-CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_CLOUD_NAME=b2stvlkr
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 ```

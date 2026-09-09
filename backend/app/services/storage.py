@@ -1,8 +1,7 @@
 from contextlib import contextmanager
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 from uuid import uuid4
-import os
 import re
 import logging
 from dataclasses import dataclass
@@ -433,49 +432,31 @@ def get_signed_url(relative: str, expires_in: int = 3600) -> str:
 @contextmanager
 def materialize_for_processing(relative: str):
     if settings.uses_cloudinary:
-        tmp = NamedTemporaryFile(delete=False, suffix=Path(relative).suffix or ".mp3")
-        tmp.close()
-        try:
+        with TemporaryDirectory(prefix="catws-download-") as temp_dir:
+            path = Path(temp_dir) / ("source" + (Path(relative).suffix or ".mp3"))
             import httpx
             response = httpx.get(get_public_url(relative), timeout=120)
             response.raise_for_status()
-            Path(tmp.name).write_bytes(response.content)
-            yield Path(tmp.name)
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
+            path.write_bytes(response.content)
+            yield path
         return
     if settings.uses_supabase:
-        tmp = NamedTemporaryFile(delete=False, suffix=Path(relative).suffix)
-        tmp.close()
-        try:
+        with TemporaryDirectory(prefix="catws-download-") as temp_dir:
+            path = Path(temp_dir) / ("source" + Path(relative).suffix)
             import httpx
             response = httpx.get(_supabase_object_url(relative), headers=_supabase_headers(), timeout=120)
             response.raise_for_status()
-            Path(tmp.name).write_bytes(response.content)
-            yield Path(tmp.name)
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
+            path.write_bytes(response.content)
+            yield path
         return
     if not settings.uses_s3:
         yield settings.media_path / relative
         return
     suffix = Path(relative).suffix
-    tmp = NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.close()
-    try:
-        _s3().download_file(settings.s3_bucket, relative, tmp.name)
-        yield Path(tmp.name)
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+    with TemporaryDirectory(prefix="catws-download-") as temp_dir:
+        path = Path(temp_dir) / ("source" + suffix)
+        _s3().download_file(settings.s3_bucket, relative, str(path))
+        yield path
 
 
 def store_generated_file(local_path: Path, relative: str, content_type: str = "audio/mpeg") -> str:

@@ -15,9 +15,11 @@ class Settings(BaseSettings):
 
     app_name: str = "Catws Music API"
     environment: str = Field(default="development", validation_alias=AliasChoices("ENVIRONMENT", "APP_ENV"))
+    # SECRET_KEY is authoritative. JWT_SECRET is accepted only as a legacy
+    # fallback so an existing deployment can rotate without a code change.
     secret_key: str = Field(
         default="dev-only-change-me",
-        validation_alias=AliasChoices("JWT_SECRET", "SECRET_KEY"),
+        validation_alias=AliasChoices("SECRET_KEY", "JWT_SECRET"),
     )
     access_token_minutes: int = 1440
     # SQLite remains a development-only default so the project can boot before
@@ -98,13 +100,13 @@ class Settings(BaseSettings):
             missing.append("STORAGE_BACKEND=cloudinary")
         if not self.secret_key or self.secret_key.startswith(("dev-", "CHANGE_ME", "YOUR_", "GENERATE_")):
             missing.append("SECRET_KEY")
-        if not self.cloudinary_cloud_name:
+        if not self.cloudinary_cloud_name or self.cloudinary_cloud_name.startswith(("YOUR_", "CHANGE_ME")):
             missing.append("CLOUDINARY_CLOUD_NAME")
-        if not self.cloudinary_api_key:
+        if not self.cloudinary_api_key or self.cloudinary_api_key.startswith(("YOUR_", "CHANGE_ME")):
             missing.append("CLOUDINARY_API_KEY")
         if not self.cloudinary_api_secret or self.cloudinary_api_secret.startswith("YOUR_"):
             missing.append("CLOUDINARY_API_SECRET")
-        if not self.admin_username:
+        if not self.admin_username or self.admin_username.startswith(("YOUR_", "CHANGE_ME")):
             missing.append("ADMIN_USERNAME")
         if not self.admin_password or self.admin_password.startswith(("CHANGE_ME", "YOUR_")):
             missing.append("ADMIN_PASSWORD")

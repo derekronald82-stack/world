@@ -47,6 +47,12 @@ media/outputs/
 media/processed/
 media/ffmpeg_temp/
 media/user-generated/
+**/temporary_audio/
+**/ffmpeg_temp/
+**/temp_audio/
+**/tmp_audio/
+*.wav.tmp
+*.mp3.tmp
 *.zip
 
 # Local/personal content

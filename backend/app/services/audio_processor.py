@@ -1,7 +1,6 @@
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 from uuid import uuid4
-import os
 import numpy as np
 from pydub import AudioSegment
 from .effects_8d import EffectParams, apply_8d_effect
@@ -48,13 +47,7 @@ def convert_to_8d(
     rendered = AudioSegment(pcm.tobytes(), frame_rate=sr, sample_width=2, channels=2)
 
     relative = (Path(output_prefix) / f"{uuid4().hex}_8d.mp3").as_posix()
-    tmp = NamedTemporaryFile(delete=False, suffix=".mp3")
-    tmp.close()
-    try:
-        rendered.export(tmp.name, format="mp3", bitrate="192k")
-        return store_generated_file(Path(tmp.name), relative)
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+    with TemporaryDirectory(prefix="catws-ffmpeg-") as temp_dir:
+        output_path = Path(temp_dir) / "rendered.mp3"
+        rendered.export(str(output_path), format="mp3", bitrate="192k")
+        return store_generated_file(output_path, relative)
