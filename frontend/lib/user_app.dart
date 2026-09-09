@@ -6,6 +6,11 @@ import 'core/local_library_store.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const CatwsUserApp());
+}
+
 class CatwsUserApp extends StatefulWidget {
   const CatwsUserApp({super.key});
 

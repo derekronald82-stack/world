@@ -5,6 +5,11 @@ import 'core/auth_store.dart';
 import 'screens/admin_screen.dart';
 import 'screens/login_screen.dart';
 
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const CatwsAdminApp());
+}
+
 class CatwsAdminApp extends StatefulWidget {
   const CatwsAdminApp({super.key});
 
