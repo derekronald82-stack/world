@@ -1,0 +1,9 @@
+api.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+
+admin.example.com {
+    root * /srv/catws/frontend/build/web
+    try_files {path} /index.html
+    file_server
+}
