@@ -19,7 +19,7 @@ keyAlias=your-key-alias
 storeFile=C:/secure/catws-upload-key.jks
 ```
 
-The Gradle release config reads that file. Without it, local release smoke builds use the debug key; that fallback must not be used for production distribution. Never commit the keystore or `key.properties`.
+The Gradle release config reads that file and fails a release build if it is missing or incomplete. Debug builds continue to use the normal debug key. Never commit the keystore or `key.properties`.
 
 Build with the production API URL:
 

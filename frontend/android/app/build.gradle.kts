@@ -1,4 +1,5 @@
 import java.io.FileInputStream
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -11,6 +12,23 @@ val signingPropertiesFile = rootProject.file("key.properties")
 val signingProperties = Properties()
 if (signingPropertiesFile.exists()) {
     FileInputStream(signingPropertiesFile).use { signingProperties.load(it) }
+}
+val releaseTasksRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+val releaseStoreFile = signingProperties.getProperty("storeFile")
+val hasCompleteReleaseSigning = signingPropertiesFile.isFile &&
+    signingProperties.getProperty("storePassword").orEmpty().isNotBlank() &&
+    signingProperties.getProperty("keyPassword").orEmpty().isNotBlank() &&
+    signingProperties.getProperty("keyAlias").orEmpty().isNotBlank() &&
+    !releaseStoreFile.isNullOrBlank() &&
+    File(releaseStoreFile).isFile
+
+if (releaseTasksRequested && !hasCompleteReleaseSigning) {
+    throw GradleException(
+        "Production release signing is not configured. Create frontend/android/key.properties " +
+            "with the existing CATWS keystore details before running a release build."
+    )
 }
 
 android {
@@ -42,20 +60,14 @@ android {
         create("release") {
             keyAlias = signingProperties.getProperty("keyAlias")
             keyPassword = signingProperties.getProperty("keyPassword")
-            storeFile = signingProperties.getProperty("storeFile")?.let { file(it) }
+            storeFile = signingProperties.getProperty("storeFile")?.let { File(it) }
             storePassword = signingProperties.getProperty("storePassword")
         }
     }
 
     buildTypes {
         release {
-            // Production builds must provide frontend/android/key.properties.
-            // The debug fallback keeps local release smoke tests usable.
-            signingConfig = if (signingPropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
