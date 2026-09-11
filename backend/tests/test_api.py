@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test_8d_music.db")
@@ -232,6 +233,42 @@ def test_normal_and_8d_admin_catalog_routes_are_separate():
         assert forbidden.status_code == 403
 
 
+def test_admin_can_bulk_upload_up_to_ten_song_cover_pairs():
+    admin_name = "bulk_upload_admin_v1"
+    password = "StrongAdminPass123"
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.username == admin_name))
+        if not admin:
+            admin = User(username=admin_name, password_hash=hash_password(password), role="admin")
+            db.add(admin)
+            db.commit()
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": admin_name, "password": password})
+        assert login.status_code == 200
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        audio = [
+            ("audio", (f"Track {index}.mp3", b"ID3bulk", "audio/mpeg"))
+            for index in range(1, 3)
+        ]
+        covers = [
+            ("cover", (f"Track {index}.jpg", b"\xff\xd8\xffbulk", "image/jpeg"))
+            for index in range(1, 3)
+        ]
+        manifest = json.dumps([
+            {"audio_name": f"Track {index}.mp3", "cover_name": f"Track {index}.jpg", "title": f"Bulk Track {index}"}
+            for index in range(1, 3)
+        ])
+        response = client.post(
+            "/api/admin/songs/bulk",
+            headers=headers,
+            data={"manifest": manifest, "artist": "Catws Bulk", "category": "Bulk Test", "song_type": "normal"},
+            files=audio + covers,
+        )
+        assert response.status_code == 201, response.text
+        assert [song["title"] for song in response.json()] == ["Bulk Track 1", "Bulk Track 2"]
+
+
 
 def test_user_can_create_save_list_and_get_download_link(monkeypatch):
     from app.routers import audio as audio_router
@@ -335,3 +372,83 @@ def test_normal_and_8d_playlists_are_separate():
         assert normal_detail.status_code == 200
         assert normal_detail.json()["song_count"] == 1
         assert normal_detail.json()["songs"][0]["id"] == song_id
+
+
+def test_app_version_is_public_and_release_crud_is_admin_only():
+    admin_name = "release_admin_v1"
+    password = "StrongAdminPass123"
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.username == admin_name))
+        if not admin:
+            admin = User(
+                username=admin_name,
+                password_hash=hash_password(password),
+                role="admin",
+            )
+            db.add(admin)
+            db.commit()
+
+    with TestClient(app) as client:
+        public_before = client.get("/api/app/version")
+        assert public_before.status_code == 200
+        assert public_before.json()["latest_version_code"] == 0
+
+        user_headers = _login(client, "release_regular_user_v1")
+        forbidden = client.get("/api/admin/app-releases", headers=user_headers)
+        assert forbidden.status_code == 403
+
+        login = client.post(
+            "/api/auth/login",
+            json={"username": admin_name, "password": password},
+        )
+        assert login.status_code == 200
+        admin_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        invalid = client.post(
+            "/api/admin/app-releases",
+            headers=admin_headers,
+            json={
+                "version_name": "4.0.1",
+                "version_code": 5,
+                "download_url": "http://example.com/catws.apk",
+            },
+        )
+        assert invalid.status_code == 422
+
+        created = client.post(
+            "/api/admin/app-releases",
+            headers=admin_headers,
+            json={
+                "version_name": "4.0.1",
+                "version_code": 5,
+                "minimum_supported_version_code": 3,
+                "title": "CATWS Songs 4.0.1",
+                "message": "Faster startup and new songs.",
+                "download_url": "https://downloads.example.com/catws-4.0.1.apk",
+                "is_active": True,
+            },
+        )
+        assert created.status_code == 201, created.text
+        release_id = created.json()["id"]
+
+        public_after = client.get("/api/app/version")
+        assert public_after.status_code == 200
+        assert public_after.json()["latest_version_code"] == 5
+        assert public_after.json()["minimum_supported_version_code"] == 3
+
+        edited = client.patch(
+            f"/api/admin/app-releases/{release_id}",
+            headers=admin_headers,
+            json={"force_update": True},
+        )
+        assert edited.status_code == 200
+        assert edited.json()["force_update"] is True
+
+        listed = client.get("/api/admin/app-releases", headers=admin_headers)
+        assert listed.status_code == 200
+        assert any(item["id"] == release_id for item in listed.json())
+
+        deleted = client.delete(
+            f"/api/admin/app-releases/{release_id}", headers=admin_headers
+        )
+        assert deleted.status_code == 204

@@ -53,8 +53,7 @@ class _EightDLibraryScreenState extends State<EightDLibraryScreen>
       if (playingId == item.id && player.playing) {
         await player.pause();
       } else {
-        await player.setUrl(item.outputUrl);
-        await player.play();
+        await PlayerService.instance.playStandalone(item.outputUrl);
         playingId = item.id;
       }
       if (mounted) setState(() {});
@@ -356,8 +355,7 @@ class _EightDPlaylistDetailScreenState
       if (playingId == item.id && player.playing) {
         await player.pause();
       } else {
-        await player.setUrl(item.outputUrl);
-        await player.play();
+        await PlayerService.instance.playStandalone(item.outputUrl);
         playingId = item.id;
       }
     } catch (_) {

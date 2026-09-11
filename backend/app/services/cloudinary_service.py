@@ -133,10 +133,19 @@ def delete_asset(public_id: str | None, *, resource_type: str | None = None) -> 
         raise last_error
 
 
-def public_url(public_id: str, *, kind: str = "audio") -> str:
+def public_url(public_id: str, *, kind: str = "audio", size: int | None = None) -> str:
     cloudinary = _client()
     from cloudinary.utils import cloudinary_url
 
     resource_type = "image" if kind == "image" else "video"
-    url, _ = cloudinary_url(public_id, resource_type=resource_type, secure=True)
+    options = {"resource_type": resource_type, "secure": True}
+    if kind == "image" and size:
+        options["transformation"] = [{
+            "width": size,
+            "height": size,
+            "crop": "fill",
+            "quality": "auto",
+            "fetch_format": "auto",
+        }]
+    url, _ = cloudinary_url(public_id, **options)
     return url

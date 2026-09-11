@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'core/api_client.dart';
+import 'core/app_update_service.dart';
 import 'core/auth_store.dart';
 import 'screens/admin_screen.dart';
 import 'screens/login_screen.dart';
@@ -20,14 +21,25 @@ class CatwsAdminApp extends StatefulWidget {
 class _CatwsAdminAppState extends State<CatwsAdminApp> {
   late final AuthStore auth = AuthStore(ApiClient());
   bool ready = false;
+  bool _updateCheckStarted = false;
 
   @override
   void initState() {
     super.initState();
     auth.addListener(_changed);
     auth.restore().then((_) {
-      if (mounted) setState(() => ready = true);
+      if (mounted) {
+        setState(() => ready = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+      }
     });
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_updateCheckStarted || !mounted) return;
+    _updateCheckStarted = true;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (mounted) await checkAndShowAppUpdate(context, auth.api);
   }
 
   void _changed() {
@@ -49,7 +61,11 @@ class _CatwsAdminAppState extends State<CatwsAdminApp> {
         home: !ready || auth.loading
             ? const Scaffold(body: Center(child: CircularProgressIndicator()))
             : auth.loggedIn && auth.isAdmin
-                ? AdminScreen(api: auth.api, onChanged: _changed)
+                ? AdminScreen(
+                    api: auth.api,
+                    onChanged: _changed,
+                    onLogout: auth.logout,
+                  )
                 : LoginScreen(auth: auth, adminOnly: true),
       );
 }
@@ -58,16 +74,26 @@ ThemeData _adminTheme() {
   const accent = Color(0xFF984D45);
   return ThemeData(
     useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.light),
+    colorScheme:
+        ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.light),
     scaffoldBackgroundColor: const Color(0xFFFFFAF7),
-    appBarTheme: const AppBarTheme(backgroundColor: Color(0xFFFFFAF7), foregroundColor: Color(0xFF403634), elevation: 0),
+    appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFFFFFAF7),
+        foregroundColor: Color(0xFF403634),
+        elevation: 0),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: const Color(0xFFFFEEE9),
-      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(16)), borderSide: BorderSide.none),
+      border: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(16)),
+          borderSide: BorderSide.none),
     ),
     filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(backgroundColor: accent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+      style: FilledButton.styleFrom(
+          backgroundColor: accent,
+          foregroundColor: Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
     ),
   );
 }

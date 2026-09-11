@@ -35,6 +35,10 @@ admin_app/build/
 .idea/
 **/.kotlin/
 **/.cxx/
+*.jks
+*.keystore
+*.apk
+key.properties
 **/local.properties
 .flutter-plugins
 .flutter-plugins-dependencies

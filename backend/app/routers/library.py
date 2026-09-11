@@ -150,7 +150,9 @@ def playlist_detail(playlist_id: int, user: User = Depends(current_user), db: Se
         select(Song)
         .join(PlaylistSong, PlaylistSong.song_id == Song.id)
         .where(PlaylistSong.playlist_id == p.id)
-        .order_by(PlaylistSong.added_at.desc())
+        # position is the user's playlist order; added_at.desc() made the
+        # queue play newest additions first and ignored the intended sequence.
+        .order_by(PlaylistSong.position.asc(), PlaylistSong.added_at.asc())
     ).scalars().all()
     available = [song_out(s, db) for s in songs if is_released(s.id, db)]
     return PlaylistDetail(id=p.id, name=p.name, description=p.description, cover_url=p.cover_url, created_at=p.created_at, song_count=len(available), songs=available)
@@ -259,7 +261,7 @@ def eightd_playlist_detail(
             User8DCreation.user_id == user.id,
             User8DCreation.saved_to_catws.is_(True),
         )
-        .order_by(User8DPlaylistItem.added_at.desc())
+        .order_by(User8DPlaylistItem.added_at.asc())
     ).scalars().all()
     songs = [_8d_creation_out(row) for row in creations]
     return User8DPlaylistDetail(

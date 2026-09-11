@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'core/api_client.dart';
+import 'core/app_update_service.dart';
 import 'core/auth_store.dart';
 import 'core/local_library_store.dart';
+import 'screens/admin_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 
@@ -20,6 +22,7 @@ class _EightDMusicAppState extends State<EightDMusicApp> {
   late final AuthStore auth = AuthStore(ApiClient());
   late final LocalLibraryStore localLibrary = LocalLibraryStore();
   bool ready = false;
+  bool _updateCheckStarted = false;
 
   @override
   void initState() {
@@ -32,7 +35,17 @@ class _EightDMusicAppState extends State<EightDMusicApp> {
 
   Future<void> _restore() async {
     await Future.wait([auth.restore(), localLibrary.restore()]);
-    if (mounted) setState(() => ready = true);
+    if (mounted) {
+      setState(() => ready = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
+    }
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_updateCheckStarted || !mounted) return;
+    _updateCheckStarted = true;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (mounted) await checkAndShowAppUpdate(context, auth.api);
   }
 
   @override
@@ -79,8 +92,18 @@ class _EightDMusicAppState extends State<EightDMusicApp> {
       home: !ready || auth.loading
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : auth.loggedIn
-          ? HomeScreen(auth: auth, localLibrary: localLibrary, showAdminControls: false)
-            : LoginScreen(auth: auth),
+              ? auth.isAdmin
+                  ? AdminScreen(
+                      api: auth.api,
+                      onChanged: _refresh,
+                      onLogout: auth.logout,
+                    )
+                  : HomeScreen(
+                      auth: auth,
+                      localLibrary: localLibrary,
+                      showAdminControls: true,
+                    )
+              : LoginScreen(auth: auth),
     );
   }
 }

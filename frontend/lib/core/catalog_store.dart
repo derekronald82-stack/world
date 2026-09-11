@@ -4,7 +4,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/song.dart';
 
-enum CatalogStatus { loading, connecting, success, cachedData, realEmpty, offline, error }
+enum CatalogStatus {
+  loading,
+  connecting,
+  success,
+  cachedData,
+  realEmpty,
+  offline,
+  error
+}
 
 class CatalogSnapshot {
   final CatalogStatus status;
@@ -12,7 +20,10 @@ class CatalogSnapshot {
 
   const CatalogSnapshot(this.status, this.songs);
 
-  bool get isConnecting => status == CatalogStatus.connecting || status == CatalogStatus.offline || status == CatalogStatus.error;
+  bool get isConnecting =>
+      status == CatalogStatus.connecting ||
+      status == CatalogStatus.offline ||
+      status == CatalogStatus.error;
 }
 
 /// Last-successful-response cache for Render cold starts.
@@ -33,7 +44,13 @@ class CatalogStore {
       cached,
     ));
     final delays = allowRetry
-        ? const [Duration.zero, Duration(seconds: 2), Duration(seconds: 4), Duration(seconds: 8), Duration(seconds: 12)]
+        ? const [
+            Duration.zero,
+            Duration(seconds: 2),
+            Duration(seconds: 4),
+            Duration(seconds: 8),
+            Duration(seconds: 12)
+          ]
         : const [Duration.zero];
     for (var attempt = 0; attempt < delays.length; attempt++) {
       final delay = delays[attempt];
@@ -43,7 +60,10 @@ class CatalogStore {
       }
       try {
         final songs = await request();
-        if (cacheResponse) await _save(songs);
+        // A valid empty response is meaningful to the caller, but retaining
+        // a non-empty last-known-good cache prevents a transient catalog
+        // regression from turning the next cold start into a blank screen.
+        if (cacheResponse && songs.isNotEmpty) await _save(songs);
         final snapshot = CatalogSnapshot(
           songs.isEmpty ? CatalogStatus.realEmpty : CatalogStatus.success,
           songs,
@@ -59,12 +79,16 @@ class CatalogStore {
     final snapshot = cached.isNotEmpty
         ? CatalogSnapshot(CatalogStatus.cachedData, cached)
         : CatalogSnapshot(
-      lastError == null ? CatalogStatus.offline : CatalogStatus.error,
-      const [],
-    );
+            lastError == null ? CatalogStatus.offline : CatalogStatus.error,
+            const [],
+          );
     onStatus?.call(snapshot);
     return snapshot;
   }
+
+  /// Exposes only the last known-good catalog for instant offline/local search.
+  /// It never performs a network request.
+  Future<List<Song>> readCached() => _read();
 
   Future<void> _save(List<Song> songs) async {
     final prefs = await SharedPreferences.getInstance();

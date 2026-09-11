@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+import json
+import re
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -10,6 +12,13 @@ from ..schemas import AdminStatsOut, SongOut
 from ..services.storage import delete_relative, save_upload_asset
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def _bulk_stem(filename: str | None) -> str:
+    """Normalize a filename for deterministic audio/cover pairing."""
+    stem = (filename or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = stem.rsplit(".", 1)[0]
+    return re.sub(r"[^a-z0-9]+", "", stem.lower())
 
 
 def _parse_release(value: str | None) -> datetime | None:
@@ -114,6 +123,107 @@ async def add_song(
             delete_relative(audio_asset.public_id)
         if cover_asset:
             delete_relative(cover_asset.public_id)
+        raise
+
+
+@router.post("/songs/bulk", response_model=list[SongOut], status_code=201)
+async def add_songs_bulk(
+    manifest: str = Form(...),
+    artist: str = Form("Unknown Artist", max_length=120),
+    category: str = Form("Other", max_length=60),
+    genre: str | None = Form(None, max_length=60),
+    song_type: str = Form("normal"),
+    is_featured: bool = Form(False),
+    is_published: bool = Form(True),
+    audio: list[UploadFile] = File(...),
+    cover: list[UploadFile] = File(...),
+    admin: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+):
+    """Create up to ten catalog songs in one admin operation.
+
+    The client sends a manifest containing the selected filenames. Covers are
+    paired by normalized filename stem, with positional pairing as a safe
+    fallback for file pickers that rename files during selection. All assets
+    are uploaded before the database transaction is committed; a failure
+    rolls back the transaction and removes every asset created by this batch.
+    """
+    if song_type not in {"normal", "8d"}:
+        raise HTTPException(400, "song_type must be normal or 8d")
+    if not 1 <= len(audio) <= 10:
+        raise HTTPException(400, "Select between 1 and 10 audio files")
+    if len(cover) != len(audio):
+        raise HTTPException(400, "Select exactly one cover image for each song")
+    try:
+        entries = json.loads(manifest)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "Invalid bulk upload manifest") from exc
+    if not isinstance(entries, list) or len(entries) != len(audio):
+        raise HTTPException(422, "Bulk upload manifest does not match the files")
+
+    covers_by_stem: dict[str, list[UploadFile]] = {}
+    for item in cover:
+        covers_by_stem.setdefault(_bulk_stem(item.filename), []).append(item)
+    used_cover_ids: set[int] = set()
+    uploaded_objects: list[str] = []
+    songs: list[Song] = []
+    try:
+        for index, audio_file in enumerate(audio):
+            item = entries[index]
+            if not isinstance(item, dict):
+                raise HTTPException(422, "Invalid bulk upload manifest entry")
+            expected_cover_name = str(item.get("cover_name") or "")
+            expected_stem = _bulk_stem(expected_cover_name)
+            selected_cover = next(
+                (candidate for candidate in covers_by_stem.get(expected_stem, [])
+                 if id(candidate) not in used_cover_ids),
+                None,
+            )
+            if selected_cover is None:
+                selected_cover = next(
+                    (candidate for candidate in cover if id(candidate) not in used_cover_ids),
+                    None,
+                )
+            if selected_cover is None:
+                raise HTTPException(400, "Each audio file needs one cover image")
+            used_cover_ids.add(id(selected_cover))
+
+            title = str(item.get("title") or "").strip()
+            if not title:
+                title = re.sub(r"[_-]+", " ", (audio_file.filename or "Song").rsplit(".", 1)[0]).strip()
+            if not title:
+                title = f"Song {index + 1}"
+            audio_asset = await save_upload_asset(audio_file, "audio", song_type)
+            uploaded_objects.append(audio_asset.public_id)
+            cover_asset = await save_upload_asset(selected_cover, "image", song_type)
+            uploaded_objects.append(cover_asset.public_id)
+            songs.append(Song(
+                title=title[:120],
+                artist=artist.strip() or "Unknown Artist",
+                category=category.strip() or "Other",
+                genre=genre.strip() if genre and genre.strip() else None,
+                audio_object_path=audio_asset.object_path,
+                cover_object_path=cover_asset.object_path,
+                audio_path=audio_asset.object_path,
+                cover_path=cover_asset.object_path,
+                audio_url=audio_asset.url,
+                audio_public_id=audio_asset.public_id,
+                cover_url=cover_asset.url,
+                cover_public_id=cover_asset.public_id,
+                song_type=song_type,
+                is_featured=is_featured,
+                is_published=is_published,
+                created_by=admin.id,
+            ))
+        db.add_all(songs)
+        db.commit()
+        for song in songs:
+            db.refresh(song)
+        return [song_out(song, db) for song in songs]
+    except Exception:
+        db.rollback()
+        for object_path in uploaded_objects:
+            delete_relative(object_path)
         raise
 
 

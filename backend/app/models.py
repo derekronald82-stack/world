@@ -22,6 +22,24 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class AppRelease(Base):
+    __tablename__ = "app_releases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    platform: Mapped[str] = mapped_column(String(20), default="android", index=True)
+    version_name: Mapped[str] = mapped_column(String(40))
+    version_code: Mapped[int] = mapped_column(index=True)
+    minimum_supported_version_code: Mapped[int] = mapped_column(default=1)
+    force_update: Mapped[bool] = mapped_column(Boolean, default=False)
+    title: Mapped[str] = mapped_column(String(120), default="New CATWS Songs Update")
+    message: Mapped[str] = mapped_column(String(500), default="Performance improvements and bug fixes.")
+    download_url: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    released_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Song(Base):
     __tablename__ = "songs"
 

@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .db import Base, engine, migrate_song_columns, repair_storage_paths
-from .routers import admin, audio, auth, library, songs
+from .routers import admin, app_updates, audio, auth, library, recommendations, songs
 from .seed import seed_admin
 from .services.storage import ensure_media_dirs, ensure_supabase_bucket
 
@@ -14,9 +14,15 @@ async def lifespan(_: FastAPI):
     settings.validate_startup()
     ensure_media_dirs()
     ensure_supabase_bucket()
-    Base.metadata.create_all(bind=engine)
-    migrate_song_columns()
-    repair_storage_paths()
+    # Production schema changes are applied by the release pipeline with
+    # Alembic. Avoid a full metadata inspection/migration pass on every
+    # Render cold start; local/test mode keeps the compatibility bootstrap.
+    if settings.is_production:
+        repair_storage_paths()
+    else:
+        Base.metadata.create_all(bind=engine)
+        migrate_song_columns()
+        repair_storage_paths()
     seed_admin()
     yield
 
@@ -50,6 +56,9 @@ app.include_router(library.router)
 app.include_router(library.compat_router)
 app.include_router(admin.router)
 app.include_router(audio.router)
+app.include_router(recommendations.router)
+app.include_router(app_updates.public_router)
+app.include_router(app_updates.admin_router)
 
 
 @app.get("/")

@@ -1,4 +1,137 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
+/// A quiet, Spotify-inspired motion layer for the player screen.
+///
+/// It is isolated behind a RepaintBoundary so progress updates do not make
+/// the rest of the player UI repaint.
+class AnimatedAudioBackdrop extends StatefulWidget {
+  const AnimatedAudioBackdrop({
+    super.key,
+    required this.playbackStream,
+  });
+
+  final Stream<bool> playbackStream;
+
+  @override
+  State<AnimatedAudioBackdrop> createState() => _AnimatedAudioBackdropState();
+}
+
+class _AnimatedAudioBackdropState extends State<AnimatedAudioBackdrop>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool _isPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 18),
+    );
+  }
+
+  void _syncPlayback(bool isPlaying) {
+    if (_isPlaying == isPlaying) return;
+    _isPlaying = isPlaying;
+    if (isPlaying) {
+      _controller.repeat();
+    } else {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: widget.playbackStream,
+      initialData: false,
+      builder: (context, snapshot) {
+        _syncPlayback(snapshot.data ?? false);
+        return IgnorePointer(
+          child: RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) => CustomPaint(
+                painter: _AudioBackdropPainter(
+                  progress: _controller.value,
+                  active: _isPlaying,
+                ),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AudioBackdropPainter extends CustomPainter {
+  const _AudioBackdropPainter({required this.progress, required this.active});
+
+  final double progress;
+  final bool active;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = progress * math.pi * 2;
+    final base = Paint()..color = const Color(0xFFFFFAF7);
+    canvas.drawRect(Offset.zero & size, base);
+
+    final opacity = active ? .16 : .08;
+    final blobs = [
+      (
+        Offset(size.width * (.18 + math.sin(t) * .06),
+            size.height * (.22 + math.cos(t * .8) * .05)),
+        size.width * .52,
+        const Color(0xFFFFB39F),
+      ),
+      (
+        Offset(size.width * (.86 + math.cos(t * .72) * .06),
+            size.height * (.48 + math.sin(t * .9) * .08)),
+        size.width * .48,
+        const Color(0xFFB9D8D0),
+      ),
+      (
+        Offset(size.width * (.35 + math.sin(t * .55) * .08),
+            size.height * (.92 + math.cos(t * .6) * .04)),
+        size.width * .58,
+        const Color(0xFFD6B8E4),
+      ),
+    ];
+
+    for (final blob in blobs) {
+      final paint = Paint()
+        ..shader = RadialGradient(
+          colors: [blob.$3.withOpacity(opacity), Colors.transparent],
+        ).createShader(Rect.fromCircle(center: blob.$1, radius: blob.$2));
+      canvas.drawCircle(blob.$1, blob.$2, paint);
+    }
+
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = const Color(0xFF984D45).withOpacity(active ? .08 : .035);
+    final center = Offset(size.width * .5, size.height * .33);
+    for (var i = 0; i < 3; i++) {
+      final radius = size.width * (.35 + i * .13) +
+          (active ? math.sin(t + i) * 12 : 0);
+      canvas.drawCircle(center, radius, ring);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AudioBackdropPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.active != active;
+}
 
 Future<String?> showAnimatedPlaylistNameDialog(
   BuildContext context, {

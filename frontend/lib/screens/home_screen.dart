@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/auth_store.dart';
 import '../core/local_library_store.dart';
 import '../core/catalog_store.dart';
+import '../core/player_service.dart';
 import '../models/song.dart';
 import 'admin_screen.dart';
 import 'player_screen.dart';
@@ -17,7 +18,11 @@ class HomeScreen extends StatefulWidget {
   final AuthStore auth;
   final LocalLibraryStore localLibrary;
   final bool showAdminControls;
-  const HomeScreen({super.key, required this.auth, required this.localLibrary, this.showAdminControls = true});
+  const HomeScreen(
+      {super.key,
+      required this.auth,
+      required this.localLibrary,
+      this.showAdminControls = true});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -33,9 +38,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String activeMood = '';
   List<String> categories = const ['Podcasts', 'Feel good', 'Relax', 'Romance'];
   List<Song> loadedSongs = [];
+  List<Song> catalogSongs = [];
   CatalogStatus catalogStatus = CatalogStatus.loading;
+  int _refreshGeneration = 0;
   Timer? refreshTimer;
   Timer? searchTimer;
+  final playerService = PlayerService.instance;
 
   static const bg = Color(0xFFFFFAF7);
   static const ink = Color(0xFF403634);
@@ -47,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     widget.auth.addListener(_authChanged);
+    playerService.addListener(_playerChanged);
     WidgetsBinding.instance.addObserver(this);
     refreshTimer = Timer.periodic(const Duration(minutes: 1), (_) => refresh());
     refresh();
@@ -64,6 +73,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     searchTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     widget.auth.removeListener(_authChanged);
+    playerService.removeListener(_playerChanged);
     search.dispose();
     super.dispose();
   }
@@ -81,14 +91,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _playerChanged() {
+    if (mounted) setState(() {});
+  }
+
   void refresh() {
+    final generation = ++_refreshGeneration;
     final request = widget.auth.api.loadCatalog(
       q: search.text,
       category: activeMood,
       onStatus: (snapshot) {
         if (!mounted) return;
+        if (generation != _refreshGeneration) return;
         setState(() {
           catalogStatus = snapshot.status;
+          if (search.text.trim().isEmpty && snapshot.songs.isNotEmpty) {
+            catalogSongs = snapshot.songs;
+          }
           if (snapshot.songs.isNotEmpty) loadedSongs = snapshot.songs;
           if (currentSong == null && snapshot.songs.isNotEmpty) {
             currentSong = snapshot.songs.first;
@@ -96,22 +115,41 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
       },
     );
+    if (!mounted || generation != _refreshGeneration) return;
     setState(() {
       future = request;
       catalogStatus = CatalogStatus.loading;
     });
     request.then((snapshot) {
-      if (!mounted) return;
+      if (!mounted || generation != _refreshGeneration) return;
       setState(() {
         loadedSongs = snapshot.songs;
-        if (currentSong == null && snapshot.songs.isNotEmpty) currentSong = snapshot.songs.first;
+        if (search.text.trim().isEmpty && snapshot.songs.isNotEmpty) {
+          catalogSongs = snapshot.songs;
+        }
+        if (currentSong == null && snapshot.songs.isNotEmpty)
+          currentSong = snapshot.songs.first;
       });
     }, onError: (_) {});
   }
 
   void searchChanged(String value) {
     searchTimer?.cancel();
-    setState(() => activeMood = '');
+    final query = value.trim().toLowerCase();
+    final local = query.isEmpty
+        ? catalogSongs
+        : catalogSongs.where((song) {
+            final haystack =
+                '${song.title} ${song.artist} ${song.album ?? ''} ${song.genre ?? ''}'
+                    .toLowerCase();
+            return haystack.contains(query);
+          }).toList(growable: false);
+    setState(() {
+      activeMood = '';
+      loadedSongs = local;
+      catalogStatus =
+          local.isEmpty ? CatalogStatus.loading : CatalogStatus.cachedData;
+    });
     searchTimer = Timer(const Duration(milliseconds: 350), refresh);
   }
 
@@ -135,6 +173,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> openSong(Song song) async {
     setState(() => currentSong = song);
+    // Recommendations are enrichment, not a prerequisite for playback.
+    // Enter the player immediately using the visible catalog queue.
     final queue = loadedSongs.isEmpty ? <Song>[song] : loadedSongs;
     final idx = queue.indexWhere((s) => s.id == song.id);
     await Navigator.push(
@@ -148,6 +188,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 remoteLibraryEnabled: widget.auth.loggedIn,
               )),
     );
+  }
+
+  Future<void> openCurrentPlayer() async {
+    final song = playerService.currentSong;
+    if (song == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          api: widget.auth.api,
+          queue: playerService.queue,
+          initialIndex: playerService.index,
+          localLibrary: widget.localLibrary,
+          remoteLibraryEnabled: widget.auth.loggedIn,
+        ),
+      ),
+    );
+  }
+
+  Future<void> miniNext() async {
+    if (playerService.queue.isEmpty) return;
+    playerService.index =
+        (playerService.index + 1) % playerService.queue.length;
+    await playerService.seekToIndex(playerService.index, autoPlay: true);
+  }
+
+  Future<void> miniPrevious() async {
+    if (playerService.queue.isEmpty) return;
+    if (playerService.player.position.inSeconds > 4) {
+      await playerService.player.seek(Duration.zero);
+      return;
+    }
+    playerService.index =
+        (playerService.index - 1 + playerService.queue.length) %
+            playerService.queue.length;
+    await playerService.seekToIndex(playerService.index, autoPlay: true);
   }
 
   Future<void> openLibrary([int initialIndex = 0]) async {
@@ -314,8 +390,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   contentPadding: EdgeInsets.zero,
                   leading: const CircleAvatar(
                       backgroundColor: chip,
-                      child: Icon(Icons.switch_account_outlined,
-                          color: accent)),
+                      child:
+                          Icon(Icons.switch_account_outlined, color: accent)),
                   title: const Text('Switch account',
                       style: TextStyle(fontWeight: FontWeight.w800)),
                   subtitle: const Text('Login as a different user'),
@@ -425,23 +501,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
                   SliverToBoxAdapter(child: _topBar()),
+                  SliverToBoxAdapter(child: _heroBanner()),
                   SliverToBoxAdapter(child: _moodChips()),
                   if (showSearch) SliverToBoxAdapter(child: _searchBox()),
                   SliverToBoxAdapter(
                     child: FutureBuilder<CatalogSnapshot>(
                       future: future,
                       builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          if (catalogStatus == CatalogStatus.connecting && loadedSongs.isEmpty) {
-            return _errorState('Connecting to Catws Songs...');
-          }
-          if (loadedSongs.isNotEmpty) {
-            return _catalogSections(
-              loadedSongs,
-              showConnecting: catalogStatus == CatalogStatus.connecting,
-            );
-          }
-          return const Padding(
+                        if (snap.connectionState != ConnectionState.done) {
+                          if (catalogStatus == CatalogStatus.connecting &&
+                              loadedSongs.isEmpty) {
+                            return _errorState('Connecting to Catws Songs...');
+                          }
+                          if (loadedSongs.isNotEmpty) {
+                            return _catalogSections(
+                              loadedSongs,
+                              showConnecting:
+                                  catalogStatus == CatalogStatus.connecting,
+                            );
+                          }
+                          return const Padding(
                             padding: EdgeInsets.only(top: 90),
                             child: Center(
                                 child:
@@ -453,7 +532,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         }
                         final snapshot = snap.data;
                         final songs = snapshot?.songs ?? const <Song>[];
-                        if (snapshot != null && snapshot.isConnecting && songs.isEmpty) {
+                        if (snapshot != null &&
+                            snapshot.isConnecting &&
+                            songs.isEmpty) {
                           return _errorState('Connecting to Catws Songs...');
                         }
                         if (songs.isEmpty) {
@@ -494,7 +575,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: Text('Connecting to Catws Songs...',
-                  style: TextStyle(color: Color(0xFF8B7771), fontWeight: FontWeight.w700)),
+                  style: TextStyle(
+                      color: Color(0xFF8B7771), fontWeight: FontWeight.w700)),
             ),
           _section(
             eyebrow: 'DANCE YOUR STRESS AWAY',
@@ -521,15 +603,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       padding: const EdgeInsets.fromLTRB(18, 14, 14, 10),
       child: Row(
         children: [
-          const Expanded(
-            child: Text(
-              'Catws Music',
-              style: TextStyle(
-                  fontSize: 31,
-                  height: 1,
-                  fontWeight: FontWeight.w500,
-                  color: ink,
-                  letterSpacing: .4),
+          Expanded(
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: accent.withOpacity(.22),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.graphic_eq_rounded,
+                      color: Colors.white, size: 28),
+                ),
+                const SizedBox(width: 11),
+                const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('Catws Music',
+                        style: TextStyle(
+                            fontSize: 25,
+                            height: 1,
+                            fontWeight: FontWeight.w700,
+                            color: ink,
+                            letterSpacing: .2)),
+                    SizedBox(height: 5),
+                    Text('Your sound. Your mood.',
+                        style: TextStyle(
+                            fontSize: 12.5,
+                            color: Color(0xFF8D7770),
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ],
             ),
           ),
           _topIcon(Icons.history_rounded, () => openLibrary(2)),
@@ -543,6 +657,95 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             }
           }),
         ],
+      ),
+    );
+  }
+
+  Widget _heroBanner() {
+    final song = loadedSongs.isNotEmpty ? loadedSongs.first : null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 2),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(26),
+        child: Container(
+          height: 174,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF7D3F3A), Color(0xFFB9685C)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: accent.withOpacity(.20),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              if (song != null)
+                Positioned(
+                  right: -18,
+                  top: -22,
+                  child: Transform.rotate(
+                    angle: .10,
+                    child: Opacity(
+                      opacity: .42,
+                      child: Image.network(
+                        song.coverUrl,
+                        width: 190,
+                        height: 190,
+                        cacheWidth: 380,
+                        cacheHeight: 380,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('MADE FOR YOUR MOMENT',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            letterSpacing: 1.3,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 7),
+                    const Text('Find your next feeling.',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            height: 1.05,
+                            fontWeight: FontWeight.w800)),
+                    const Spacer(),
+                    FilledButton.icon(
+                      onPressed: () => song == null
+                          ? setState(() => showSearch = true)
+                          : openSong(song),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: accent,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 11),
+                      ),
+                      icon: Icon(song == null
+                          ? Icons.search_rounded
+                          : Icons.play_arrow_rounded),
+                      label: Text(
+                          song == null ? 'Explore music' : 'Play something'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -581,6 +784,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     color: selected
                         ? accent.withOpacity(.30)
                         : Colors.transparent),
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                            color: accent.withOpacity(.10),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3))
+                      ]
+                    : null,
               ),
               child: Text(mood,
                   style: const TextStyle(
@@ -667,63 +878,74 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _albumTile(Song song) {
     return SizedBox(
       width: 148,
-      child: InkWell(
-        onTap: () => openSong(song),
-        borderRadius: BorderRadius.circular(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Stack(
+      child: Material(
+        color: Colors.white.withOpacity(.62),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: () => openSong(song),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    song.coverUrl,
-                    width: 148,
-                    height: 148,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      width: 148,
-                      height: 148,
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                            colors: [Color(0xFF6A3B36), Color(0xFFD68C7D)]),
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        song.coverUrl,
+                        width: 148,
+                        height: 148,
+                        cacheWidth: 296,
+                        cacheHeight: 296,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 148,
+                          height: 148,
+                          alignment: Alignment.center,
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                                colors: [Color(0xFF6A3B36), Color(0xFFD68C7D)]),
+                          ),
+                          child: const Icon(Icons.music_note_rounded,
+                              color: Colors.white, size: 50),
+                        ),
                       ),
-                      child: const Icon(Icons.music_note_rounded,
-                          color: Colors.white, size: 50),
                     ),
-                  ),
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(.28),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white54)),
+                        child: const Icon(Icons.play_arrow_rounded,
+                            color: Colors.white, size: 14),
+                      ),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  left: 6,
-                  top: 6,
-                  child: Container(
-                    width: 20,
-                    height: 20,
-                    decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(.28),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white54)),
-                    child: const Icon(Icons.play_arrow_rounded,
-                        color: Colors.white, size: 14),
-                  ),
-                ),
+                const SizedBox(height: 8),
+                Text(song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 16, color: ink, fontWeight: FontWeight.w500)),
+                const SizedBox(height: 2),
+                Text(song.artist,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 13.5,
+                        height: 1.25,
+                        color: Color(0xFF8D7770))),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(song.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 16, color: ink, fontWeight: FontWeight.w500)),
-            const SizedBox(height: 2),
-            Text(song.artist,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 13.5, height: 1.25, color: Color(0xFF8D7770))),
-          ],
+          ),
         ),
       ),
     );
@@ -765,8 +987,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (currentSong != null) _miniPlayer(currentSong!),
-          if (currentSong != null) const SizedBox(height: 10),
+          if (playerService.currentSong != null)
+            _miniPlayer(playerService.currentSong!),
+          if (playerService.currentSong != null) const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -845,8 +1068,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(width: 5),
               IconButton(
-                onPressed: () =>
-                    currentSong == null ? null : openSong(currentSong!),
+                onPressed: playerService.currentSong == null
+                    ? null
+                    : openCurrentPlayer,
                 icon: const Icon(Icons.arrow_forward_rounded,
                     color: accent, size: 34),
               ),
@@ -871,55 +1095,75 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 blurRadius: 12,
                 offset: const Offset(0, 4))
           ]),
-      child: Row(
-        children: [
-          ClipOval(
-            child: Image.network(
-              song.coverUrl,
-              width: 54,
-              height: 54,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
+      child: StreamBuilder<bool>(
+        stream: playerService.player.playerStateStream
+            .map((state) => state.playing)
+            .distinct(),
+        initialData: playerService.player.playing,
+        builder: (context, snapshot) {
+          final playing = snapshot.data ?? false;
+          return Row(
+            children: [
+              ClipOval(
+                child: Image.network(
+                  song.coverUrl,
                   width: 54,
                   height: 54,
-                  color: const Color(0xFFD8B4AB),
-                  child: const Icon(Icons.music_note_rounded,
-                      color: Colors.white)),
-            ),
-          ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(song.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: ink,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(height: 2),
-                Text(song.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: Color(0xFF8F746D), fontSize: 13)),
-              ],
-            ),
-          ),
-          IconButton(
-              onPressed: () => openSong(song),
-              icon: const Icon(Icons.skip_previous_rounded,
-                  color: ink, size: 30)),
-          IconButton(
-              onPressed: () => openSong(song),
-              icon: const Icon(Icons.play_arrow_rounded, color: ink, size: 34)),
-          IconButton(
-              onPressed: () => openSong(song),
-              icon: const Icon(Icons.skip_next_rounded, color: ink, size: 30)),
-        ],
+                  cacheWidth: 108,
+                  cacheHeight: 108,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                      width: 54,
+                      height: 54,
+                      color: const Color(0xFFD8B4AB),
+                      child: const Icon(Icons.music_note_rounded,
+                          color: Colors.white)),
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(song.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: ink,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(song.artist,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Color(0xFF8F746D), fontSize: 13)),
+                  ],
+                ),
+              ),
+              IconButton(
+                  tooltip: 'Previous song',
+                  onPressed: miniPrevious,
+                  icon: const Icon(Icons.skip_previous_rounded,
+                      color: ink, size: 30)),
+              IconButton(
+                  tooltip: playing ? 'Pause' : 'Play',
+                  onPressed: () => playing
+                      ? playerService.player.pause()
+                      : playerService.player.play(),
+                  icon: Icon(
+                      playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      color: ink,
+                      size: 34)),
+              IconButton(
+                  tooltip: 'Next song',
+                  onPressed: miniNext,
+                  icon: const Icon(Icons.skip_next_rounded,
+                      color: ink, size: 30)),
+            ],
+          );
+        },
       ),
     );
   }

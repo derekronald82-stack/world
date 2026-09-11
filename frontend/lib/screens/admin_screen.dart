@@ -6,7 +6,13 @@ import '../models/song.dart';
 class AdminScreen extends StatefulWidget {
   final ApiClient api;
   final VoidCallback onChanged;
-  const AdminScreen({super.key, required this.api, required this.onChanged});
+  final Future<void> Function()? onLogout;
+  const AdminScreen({
+    super.key,
+    required this.api,
+    required this.onChanged,
+    this.onLogout,
+  });
 
   @override
   State<AdminScreen> createState() => _AdminScreenState();
@@ -20,6 +26,13 @@ class _AdminScreenState extends State<AdminScreen> {
   final genre = TextEditingController();
   PlatformFile? audio;
   PlatformFile? cover;
+  List<PlatformFile> bulkAudio = const [];
+  List<PlatformFile> bulkCovers = const [];
+  final bulkArtist = TextEditingController();
+  final bulkCategory = TextEditingController(text: 'Other');
+  final bulkGenre = TextEditingController();
+  bool bulkBusy = false;
+  String? bulkMessage;
   bool featured = false;
   bool published = true;
   bool busy = false;
@@ -43,6 +56,9 @@ class _AdminScreenState extends State<AdminScreen> {
     album.dispose();
     category.dispose();
     genre.dispose();
+    bulkArtist.dispose();
+    bulkCategory.dispose();
+    bulkGenre.dispose();
     super.dispose();
   }
 
@@ -69,6 +85,87 @@ class _AdminScreenState extends State<AdminScreen> {
       withData: true,
     );
     if (r != null) setState(() => cover = r.files.single);
+  }
+
+  Future<void> pickBulkAudio() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (!mounted || result == null) return;
+    if (result.files.length > 10) {
+      setState(() => bulkMessage = 'Maximum 10 songs can be uploaded at once.');
+      return;
+    }
+    setState(() {
+      bulkAudio = result.files;
+      bulkMessage = null;
+    });
+  }
+
+  Future<void> pickBulkCovers() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+      allowMultiple: true,
+      withData: true,
+    );
+    if (!mounted || result == null) return;
+    if (result.files.length > 10) {
+      setState(() => bulkMessage = 'Maximum 10 cover images can be selected.');
+      return;
+    }
+    setState(() {
+      bulkCovers = result.files;
+      bulkMessage = null;
+    });
+  }
+
+  Future<void> bulkUpload(String songType) async {
+    if (bulkAudio.isEmpty ||
+        bulkAudio.length != bulkCovers.length ||
+        bulkAudio.any((file) => file.bytes == null) ||
+        bulkCovers.any((file) => file.bytes == null)) {
+      setState(() =>
+          bulkMessage = 'Select the same number of songs and cover images.');
+      return;
+    }
+    setState(() {
+      bulkBusy = true;
+      bulkMessage =
+          'Uploading ${bulkAudio.length} song${bulkAudio.length == 1 ? '' : 's'}...';
+    });
+    try {
+      final uploaded = await widget.api.bulkAddSongs(
+        songType: songType,
+        artist: bulkArtist.text.trim().isEmpty
+            ? 'Unknown Artist'
+            : bulkArtist.text.trim(),
+        category: bulkCategory.text.trim().isEmpty
+            ? 'Other'
+            : bulkCategory.text.trim(),
+        genre: bulkGenre.text.trim(),
+        audioNames: bulkAudio.map((file) => file.name).toList(),
+        audioBytes: bulkAudio.map((file) => file.bytes!).toList(),
+        coverNames: bulkCovers.map((file) => file.name).toList(),
+        coverBytes: bulkCovers.map((file) => file.bytes!).toList(),
+      );
+      if (!mounted) return;
+      setState(() {
+        bulkAudio = const [];
+        bulkCovers = const [];
+        bulkMessage =
+            '${uploaded.length} song${uploaded.length == 1 ? '' : 's'} uploaded successfully.';
+      });
+      widget.onChanged();
+      refreshSongs();
+    } catch (error) {
+      if (mounted) setState(() => bulkMessage = friendlyApiError(error));
+    } finally {
+      if (mounted) setState(() => bulkBusy = false);
+    }
   }
 
   Future<void> pickReleaseTime() async {
@@ -201,14 +298,23 @@ class _AdminScreenState extends State<AdminScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
+          actions: [
+            if (widget.onLogout != null)
+              IconButton(
+                tooltip: 'Logout',
+                onPressed: () async => widget.onLogout!(),
+                icon: const Icon(Icons.logout_rounded),
+              ),
+          ],
           title: const Text('Admin • Catws Music'),
           bottom: const TabBar(tabs: [
             Tab(text: 'Dashboard'),
             Tab(text: 'Add Normal'),
             Tab(text: 'Add 8D'),
+            Tab(text: 'Bulk Upload'),
             Tab(text: 'Manage Normal'),
             Tab(text: 'Manage 8D')
           ]),
@@ -217,6 +323,7 @@ class _AdminScreenState extends State<AdminScreen> {
           _dashboardTab(),
           _uploadTab('normal'),
           _uploadTab('8d'),
+          _bulkUploadTab(),
           _manageTab('normal'),
           _manageTab('8d')
         ]),
@@ -240,14 +347,19 @@ class _AdminScreenState extends State<AdminScreen> {
           ('Users', '${data['users'] ?? 0}', Icons.people_outline_rounded),
           ('Playlists', '${data['playlists'] ?? 0}', Icons.queue_music_rounded),
           ('Likes', '${data['favorites'] ?? 0}', Icons.favorite_border_rounded),
-          ('8D jobs', '${data['conversions'] ?? 0}', Icons.spatial_audio_rounded),
+          (
+            '8D jobs',
+            '${data['conversions'] ?? 0}',
+            Icons.spatial_audio_rounded
+          ),
         ];
         return RefreshIndicator(
           onRefresh: () async => setState(() {}),
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
-              const Text('Admin Dashboard', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+              const Text('Admin Dashboard',
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
               const SizedBox(height: 6),
               const Text('CATWS SONGS catalog health and content overview.'),
               const SizedBox(height: 20),
@@ -255,9 +367,13 @@ class _AdminScreenState extends State<AdminScreen> {
                     elevation: 0,
                     color: const Color(0xFFFFEEE9),
                     child: ListTile(
-                      leading: CircleAvatar(backgroundColor: Colors.white, child: Icon(card.$3, color: accent)),
+                      leading: CircleAvatar(
+                          backgroundColor: Colors.white,
+                          child: Icon(card.$3, color: accent)),
                       title: Text(card.$1),
-                      trailing: Text(card.$2, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                      trailing: Text(card.$2,
+                          style: const TextStyle(
+                              fontSize: 22, fontWeight: FontWeight.w900)),
                     ),
                   )),
             ],
@@ -309,7 +425,8 @@ class _AdminScreenState extends State<AdminScreen> {
         OutlinedButton.icon(
             onPressed: pickCover,
             icon: const Icon(Icons.image_outlined),
-            label: Text(cover == null ? 'Choose cover image' : 'Change picture')),
+            label:
+                Text(cover == null ? 'Choose cover image' : 'Change picture')),
         if (cover?.bytes != null) ...[
           const SizedBox(height: 10),
           ClipRRect(
@@ -367,7 +484,8 @@ class _AdminScreenState extends State<AdminScreen> {
           Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Text(uploadStatus,
-                  style: const TextStyle(fontWeight: FontWeight.w700, color: accent))),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, color: accent))),
         FilledButton.icon(
           onPressed: busy ? null : () => upload(songType),
           style: FilledButton.styleFrom(
@@ -385,6 +503,83 @@ class _AdminScreenState extends State<AdminScreen> {
               : isEightD
                   ? 'Add 8D Song'
                   : 'Add Normal Song'),
+        ),
+      ],
+    );
+  }
+
+  Widget _bulkUploadTab() {
+    final pairCount = bulkAudio.length;
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        const Text('Bulk upload',
+            style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 6),
+        const Text(
+            'Upload up to 10 songs and one cover image for each song. Files are paired by name when possible; otherwise by selection order.'),
+        const SizedBox(height: 18),
+        TextField(
+            controller: bulkArtist,
+            decoration:
+                const InputDecoration(labelText: 'Artist for all songs')),
+        const SizedBox(height: 12),
+        TextField(
+            controller: bulkCategory,
+            decoration:
+                const InputDecoration(labelText: 'Category for all songs')),
+        const SizedBox(height: 12),
+        TextField(
+            controller: bulkGenre,
+            decoration: const InputDecoration(
+                labelText: 'Genre for all songs (optional)')),
+        const SizedBox(height: 18),
+        OutlinedButton.icon(
+          onPressed: bulkBusy ? null : pickBulkAudio,
+          icon: const Icon(Icons.library_music_rounded),
+          label: Text(bulkAudio.isEmpty
+              ? 'Choose songs (max 10)'
+              : '$pairCount songs selected'),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: bulkBusy ? null : pickBulkCovers,
+          icon: const Icon(Icons.collections_outlined),
+          label: Text(bulkCovers.isEmpty
+              ? 'Choose cover images (same count)'
+              : '${bulkCovers.length} cover images selected'),
+        ),
+        if (bulkAudio.isNotEmpty || bulkCovers.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('$pairCount songs • ${bulkCovers.length} covers',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+        ],
+        if (bulkMessage != null) ...[
+          const SizedBox(height: 14),
+          Text(bulkMessage!,
+              style: TextStyle(
+                  color: bulkMessage!.contains('successfully')
+                      ? Colors.green
+                      : accent,
+                  fontWeight: FontWeight.w700)),
+        ],
+        const SizedBox(height: 20),
+        FilledButton.icon(
+          onPressed: bulkBusy ? null : () => bulkUpload('normal'),
+          icon: bulkBusy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.cloud_upload_outlined),
+          label: Text(bulkBusy ? 'Uploading...' : 'Upload normal songs'),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: bulkBusy ? null : () => bulkUpload('8d'),
+          icon: const Icon(Icons.spatial_audio_rounded),
+          label: const Text('Upload as 8D songs'),
         ),
       ],
     );

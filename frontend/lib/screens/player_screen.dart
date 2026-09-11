@@ -7,6 +7,7 @@ import '../core/local_library_store.dart';
 import '../core/player_service.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
+import '../widgets/playlist_animations.dart';
 
 class PlayerScreen extends StatefulWidget {
   final ApiClient api;
@@ -30,6 +31,7 @@ class PlayerScreen extends StatefulWidget {
 
 class _PlayerScreenState extends State<PlayerScreen> {
   final player = PlayerService.instance.player;
+  final playerService = PlayerService.instance;
   late int index;
   double pan = .5, intensity = 1.0, reverb = .35;
   bool converting = false;
@@ -38,10 +40,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool repeatOne = false;
   String? convertedUrl;
   String? error;
-  bool advancing = false;
+  bool skipping = false;
   Timer? sleepTimer;
   int? sleepMinutes;
   StreamSubscription<PlayerState>? stateSub;
+  StreamSubscription<int?>? indexSub;
 
   static const accent = Color(0xFF984D45);
   static const ink = Color(0xFF403634);
@@ -55,18 +58,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
     index = widget.queue.isEmpty
         ? 0
         : widget.initialIndex.clamp(0, widget.queue.length - 1).toInt();
-    PlayerService.instance.setQueue(widget.queue, startIndex: index);
+    playerService.setQueue(widget.queue, startIndex: index);
+    // Repeat-one is screen state; never leak it into a newly opened playlist.
+    player.setLoopMode(LoopMode.off);
+    if (widget.queue.isEmpty) return;
     _loadCurrent(autoPlay: true);
     _loadFavorite();
+    indexSub = player.currentIndexStream.listen(_onPlayerIndexChanged);
     stateSub = player.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
-        if (advancing) return;
         if (repeatOne) {
           player.seek(Duration.zero);
           player.play();
-        } else {
-          advancing = true;
-          next(autoPlay: true);
         }
       }
     });
@@ -76,6 +79,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     sleepTimer?.cancel();
     stateSub?.cancel();
+    indexSub?.cancel();
     // The catalog player is process-wide and must continue across routes.
     super.dispose();
   }
@@ -84,7 +88,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     convertedUrl = null;
     error = null;
     try {
-      await player.setUrl(song.audioUrl);
+      await playerService.loadQueue(autoPlay: autoPlay);
       if (widget.remoteLibraryEnabled) {
         widget.api.recordPlay(song.id).catchError((_) {});
       } else {
@@ -94,9 +98,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) setState(() => error = 'Could not load this track.');
-    } finally {
-      advancing = false;
     }
+  }
+
+  void _onPlayerIndexChanged(int? nextIndex) {
+    if (!mounted || nextIndex == null || nextIndex < 0 || nextIndex >= widget.queue.length) {
+      return;
+    }
+    if (nextIndex == index) return;
+    setState(() {
+      index = nextIndex;
+      convertedUrl = null;
+      favorite = false;
+    });
+    if (widget.remoteLibraryEnabled) {
+      widget.api.recordPlay(song.id).catchError((_) {});
+    } else {
+      widget.localLibrary?.addHistory(song).catchError((_) {});
+    }
+    _loadFavorite();
   }
 
   Future<void> _loadFavorite() async {
@@ -127,28 +147,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> next({bool autoPlay = true}) async {
-    if (widget.queue.isEmpty) return;
-    if (shuffle && widget.queue.length > 1) {
-      var nextIndex = Random().nextInt(widget.queue.length);
-      if (nextIndex == index) nextIndex = (nextIndex + 1) % widget.queue.length;
-      index = nextIndex;
-    } else {
-      index = (index + 1) % widget.queue.length;
+    if (widget.queue.isEmpty || skipping) return;
+    skipping = true;
+    try {
+      if (shuffle && widget.queue.length > 1) {
+        var nextIndex = Random().nextInt(widget.queue.length);
+        if (nextIndex == index) {
+          nextIndex = (nextIndex + 1) % widget.queue.length;
+        }
+        index = nextIndex;
+      } else {
+        index = (index + 1) % widget.queue.length;
+      }
+      playerService.index = index;
+      favorite = false;
+      await playerService.seekToIndex(index, autoPlay: autoPlay);
+      _loadFavorite();
+    } finally {
+      skipping = false;
     }
-    favorite = false;
-    await _loadCurrent(autoPlay: autoPlay);
-    _loadFavorite();
   }
 
   Future<void> previous() async {
+    if (widget.queue.isEmpty || skipping) return;
     if ((player.position.inSeconds) > 4) {
       await player.seek(Duration.zero);
       return;
     }
+    skipping = true;
     index = (index - 1 + widget.queue.length) % widget.queue.length;
+    playerService.index = index;
     favorite = false;
-    await _loadCurrent(autoPlay: true);
-    _loadFavorite();
+    try {
+      await playerService.seekToIndex(index, autoPlay: true);
+      _loadFavorite();
+    } finally {
+      skipping = false;
+    }
   }
 
   Future<void> convert() async {
@@ -160,8 +195,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final url = await widget.api.convert8d(song.id,
           panSpeed: pan, intensity: intensity, reverb: reverb);
       convertedUrl = url;
-      await player.setUrl(url);
-      await player.play();
+      await playerService.playStandalone(url);
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) setState(() => error = friendlyApiError(e));
@@ -172,8 +206,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> originalVersion() async {
     convertedUrl = null;
-    await player.setUrl(song.audioUrl);
-    await player.play();
+    playerService.setQueue(widget.queue, startIndex: index);
+    await playerService.loadQueue(autoPlay: true);
     if (mounted) setState(() {});
   }
 
@@ -405,6 +439,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.queue.isEmpty) {
+      return Scaffold(
+        backgroundColor: bg,
+        appBar: AppBar(title: const Text('Now Playing')),
+        body: const Center(child: Text('No songs in this queue.')),
+      );
+    }
+    final artworkSize = min(300.0, MediaQuery.sizeOf(context).width - 44);
     return Scaffold(
       backgroundColor: bg,
       appBar: AppBar(
@@ -420,28 +462,38 @@ class _PlayerScreenState extends State<PlayerScreen> {
               icon: const Icon(Icons.playlist_add_rounded)),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(22, 8, 22, 36),
+      body: Stack(
         children: [
-          Center(
-            child: Hero(
-              tag: 'song-${song.id}',
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(28),
-                child: Image.network(
-                  song.coverUrl,
-                  width: 300,
-                  height: 300,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                      width: 300,
-                      height: 300,
-                      color: const Color(0xFFFFDAD4),
-                      child: const Icon(Icons.music_note_rounded, size: 90)),
-                ),
-              ),
+          Positioned.fill(
+            child: AnimatedAudioBackdrop(
+              playbackStream: player.playerStateStream
+                  .map((state) => state.playing)
+                  .distinct(),
             ),
           ),
+          ListView(
+            padding: const EdgeInsets.fromLTRB(22, 8, 22, 36),
+            children: [
+              Center(
+                child: Hero(
+                  tag: 'song-${song.id}',
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(28),
+                    child: Image.network(
+                      song.coverUrl,
+                      width: artworkSize,
+                      height: artworkSize,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                          width: artworkSize,
+                          height: artworkSize,
+                          color: const Color(0xFFFFDAD4),
+                          child: Icon(Icons.music_note_rounded,
+                              size: artworkSize * .3)),
+                    ),
+                  ),
+                ),
+              ),
           const SizedBox(height: 22),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -509,7 +561,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   iconSize: 40,
                   icon: const Icon(Icons.skip_next_rounded)),
               IconButton(
-                  onPressed: () => setState(() => repeatOne = !repeatOne),
+                  onPressed: () {
+                    final enabled = !repeatOne;
+                    setState(() => repeatOne = enabled);
+                    player.setLoopMode(
+                        enabled ? LoopMode.one : LoopMode.off);
+                  },
                   icon: Icon(Icons.repeat_one_rounded,
                       color: repeatOne ? accent : ink)),
             ],
@@ -593,6 +650,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       overflow: TextOverflow.ellipsis),
             ),
           ),
+        ],
+      ),
         ],
       ),
     );

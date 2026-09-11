@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
 
+    # Keep the OpenRouter credential server-side. The APK must never contain
+    # this secret; metadata ranking remains available without a key.
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_site_url: str = ""
+    openrouter_app_name: str = "Catws Songs"
+
     cors_origins: str = "*"
     admin_username: str = ""
     admin_password: str = ""

@@ -121,8 +121,7 @@ class _Create8DScreenState extends State<Create8DScreen> {
         if (mounted) setState(() {});
         return;
       }
-      await player.setUrl(item.outputUrl);
-      await player.play();
+      await PlayerService.instance.playStandalone(item.outputUrl);
       if (mounted) setState(() => playingId = item.id);
     } catch (_) {
       if (mounted) {

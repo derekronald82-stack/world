@@ -81,11 +81,18 @@ class ApiClient {
   }
 
   Future<List<Song>> songs(
-      {String q = '', String category = '', String? songType}) async {
+      {String q = '',
+      String category = '',
+      String? songType,
+      int limit = 60,
+      int offset = 0}) async {
     final params = <String, String>{};
     if (q.trim().isNotEmpty) params['q'] = q.trim();
     if (category.trim().isNotEmpty) params['category'] = category.trim();
-    if (songType != null) params['song_type'] = songType == 'eightd' ? '8d' : songType;
+    if (songType != null)
+      params['song_type'] = songType == 'eightd' ? '8d' : songType;
+    params['limit'] = '$limit';
+    params['offset'] = '$offset';
     final uri = Uri.parse('$baseUrl/api/songs')
         .replace(queryParameters: params.isEmpty ? null : params);
     final r = await http.get(uri).timeout(requestTimeout);
@@ -101,7 +108,8 @@ class ApiClient {
     String? songType,
     void Function(CatalogSnapshot snapshot)? onStatus,
   }) {
-    final isRootCatalog = q.trim().isEmpty && category.trim().isEmpty && songType == null;
+    final isRootCatalog =
+        q.trim().isEmpty && category.trim().isEmpty && songType == null;
     return catalogStore.load(
       () => songs(q: q, category: category, songType: songType),
       cacheResponse: isRootCatalog,
@@ -110,7 +118,16 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> health() async {
-    final r = await http.get(Uri.parse('$baseUrl/api/health')).timeout(requestTimeout);
+    final r = await http
+        .get(Uri.parse('$baseUrl/api/health'))
+        .timeout(requestTimeout);
+    return Map<String, dynamic>.from(_decode(r));
+  }
+
+  Future<Map<String, dynamic>> appVersion() async {
+    final r = await http
+        .get(Uri.parse('$baseUrl/api/app/version'))
+        .timeout(requestTimeout);
     return Map<String, dynamic>.from(_decode(r));
   }
 
@@ -137,10 +154,25 @@ class ApiClient {
         .toList();
   }
 
-  Future<List<Song>> searchSongs(String query) async {
-    final uri = Uri.parse('$baseUrl/api/search')
-        .replace(queryParameters: {'q': query});
+  Future<List<Song>> searchSongs(String query,
+      {int limit = 20, int offset = 0}) async {
+    final uri = Uri.parse('$baseUrl/api/search').replace(
+        queryParameters: {'q': query, 'limit': '$limit', 'offset': '$offset'});
     final r = await http.get(uri);
+    final data = _decode(r) as List<dynamic>;
+    return data
+        .map((e) => Song.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  Future<List<Song>> recommendations({int? seedId, int limit = 12}) async {
+    final params = <String, String>{'limit': '$limit'};
+    if (seedId != null) params['seed_id'] = '$seedId';
+    final uri = Uri.parse('$baseUrl/api/recommendations')
+        .replace(queryParameters: params);
+    final r = await http
+        .get(uri, headers: _requiredAuthHeaders)
+        .timeout(requestTimeout);
     final data = _decode(r) as List<dynamic>;
     return data
         .map((e) => Song.fromJson(Map<String, dynamic>.from(e)))
@@ -159,7 +191,8 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> adminStats() async {
-    final r = await http.get(Uri.parse('$baseUrl/api/admin/stats'), headers: _requiredAuthHeaders);
+    final r = await http.get(Uri.parse('$baseUrl/api/admin/stats'),
+        headers: _requiredAuthHeaders);
     return Map<String, dynamic>.from(_decode(r));
   }
 
@@ -277,6 +310,64 @@ class ApiClient {
     _decode(response);
   }
 
+  Future<List<Song>> bulkAddSongs({
+    required String songType,
+    required String artist,
+    required String category,
+    String genre = '',
+    required List<String> audioNames,
+    required List<Uint8List> audioBytes,
+    required List<String> coverNames,
+    required List<Uint8List> coverBytes,
+    bool featured = false,
+    bool published = true,
+  }) async {
+    if (audioNames.isEmpty ||
+        audioNames.length > 10 ||
+        audioNames.length != audioBytes.length ||
+        audioNames.length != coverNames.length ||
+        audioNames.length != coverBytes.length) {
+      throw ArgumentError('Bulk upload requires 1-10 audio/cover pairs.');
+    }
+    final req = http.MultipartRequest(
+        'POST', Uri.parse('$baseUrl/api/admin/songs/bulk'));
+    req.headers.addAll(_requiredAuthHeaders);
+    req.fields.addAll({
+      'artist': artist,
+      'category': category,
+      if (genre.trim().isNotEmpty) 'genre': genre.trim(),
+      'song_type': songType,
+      'is_featured': featured.toString(),
+      'is_published': published.toString(),
+      'manifest': jsonEncode(List.generate(
+          audioNames.length,
+          (index) => {
+                'audio_name': audioNames[index],
+                'cover_name': coverNames[index],
+                'title': _bulkTitle(audioNames[index]),
+              })),
+    });
+    for (var index = 0; index < audioNames.length; index++) {
+      req.files.add(http.MultipartFile.fromBytes('audio', audioBytes[index],
+          filename: audioNames[index]));
+      req.files.add(http.MultipartFile.fromBytes('cover', coverBytes[index],
+          filename: coverNames[index]));
+    }
+    final response = await http.Response.fromStream(await req.send());
+    final data = _decode(response) as List<dynamic>;
+    return data
+        .map((item) => Song.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  String _bulkTitle(String filename) {
+    final name = filename.split(RegExp(r'[/\\]')).last;
+    return name
+        .replaceFirst(RegExp(r'\.[^.]+$'), '')
+        .replaceAll(RegExp(r'[_-]+'), ' ')
+        .trim();
+  }
+
   Future<void> updateSong({
     required int id,
     required String title,
@@ -387,16 +478,19 @@ class ApiClient {
     String? coverName,
     Uint8List? coverBytes,
   }) async {
-    final req = http.MultipartRequest('PATCH', Uri.parse('$baseUrl/api/library/playlists/$id'));
+    final req = http.MultipartRequest(
+        'PATCH', Uri.parse('$baseUrl/api/library/playlists/$id'));
     req.headers.addAll(_requiredAuthHeaders);
     if (name != null) req.fields['name'] = name;
     if (description != null) req.fields['description'] = description;
     if (coverName != null && coverBytes != null) {
-      req.files.add(http.MultipartFile.fromBytes('cover', coverBytes, filename: coverName));
+      req.files.add(http.MultipartFile.fromBytes('cover', coverBytes,
+          filename: coverName));
     }
     final streamed = await req.send();
     final response = await http.Response.fromStream(streamed);
-    return PlaylistSummary.fromJson(Map<String, dynamic>.from(_decode(response)));
+    return PlaylistSummary.fromJson(
+        Map<String, dynamic>.from(_decode(response)));
   }
 
   Future<PlaylistDetail> playlist(int id) async {

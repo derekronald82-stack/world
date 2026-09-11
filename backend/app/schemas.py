@@ -97,6 +97,60 @@ class AdminStatsOut(BaseModel):
     conversions: int
 
 
+class AppReleaseCreate(BaseModel):
+    platform: str = Field(default="android", pattern="^android$")
+    version_name: str = Field(min_length=1, max_length=40)
+    version_code: int = Field(gt=0)
+    minimum_supported_version_code: int = Field(default=1, ge=0)
+    force_update: bool = False
+    title: str = Field(default="New CATWS Songs Update", min_length=1, max_length=120)
+    message: str = Field(default="Performance improvements and bug fixes.", min_length=1, max_length=500)
+    download_url: str = Field(min_length=1, max_length=1000)
+    is_active: bool = False
+    released_at: datetime | None = None
+
+
+class AppReleaseUpdate(BaseModel):
+    version_name: str | None = Field(default=None, min_length=1, max_length=40)
+    version_code: int | None = Field(default=None, gt=0)
+    minimum_supported_version_code: int | None = Field(default=None, ge=0)
+    force_update: bool | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    message: str | None = Field(default=None, min_length=1, max_length=500)
+    download_url: str | None = Field(default=None, min_length=1, max_length=1000)
+    is_active: bool | None = None
+    released_at: datetime | None = None
+
+
+class AppReleaseOut(BaseModel):
+    id: int
+    platform: str
+    version_name: str
+    version_code: int
+    minimum_supported_version_code: int
+    force_update: bool
+    title: str
+    message: str
+    download_url: str
+    is_active: bool
+    released_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AppVersionOut(BaseModel):
+    latest_version_name: str
+    latest_version_code: int
+    minimum_supported_version_code: int
+    force_update: bool
+    title: str
+    message: str
+    download_url: str
+    released_at: datetime | None = None
+
+
 class User8DCreationOut(BaseModel):
     id: int
     title: str

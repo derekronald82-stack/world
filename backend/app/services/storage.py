@@ -373,11 +373,11 @@ def exists(relative: str) -> bool:
         return False
 
 
-def get_public_url(relative: str, *, kind: str = "audio") -> str:
+def get_public_url(relative: str, *, kind: str = "audio", size: int | None = None) -> str:
     relative = normalize_object_path(relative)
     if settings.uses_cloudinary:
         from .cloudinary_service import public_url
-        return public_url(relative, kind=kind)
+        return public_url(relative, kind=kind, size=size)
     if settings.uses_supabase:
         return _supabase_public_url(relative)
     if settings.uses_s3:
