@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,9 +9,12 @@ from .routers import admin, app_updates, audio, auth, library, recommendations, 
 from .seed import seed_admin
 from .services.storage import ensure_media_dirs, ensure_supabase_bucket
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logger.info("Starting CATWS API startup checks")
     settings.validate_startup()
     ensure_media_dirs()
     ensure_supabase_bucket()
@@ -24,6 +28,7 @@ async def lifespan(_: FastAPI):
         migrate_song_columns()
         repair_storage_paths()
     seed_admin()
+    logger.info("CATWS API startup complete")
     yield
 
 

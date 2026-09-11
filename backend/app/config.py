@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -90,6 +90,16 @@ class Settings(BaseSettings):
         # Render sets RENDER=true automatically. ENVIRONMENT=production also
         # makes this explicit for other deployment platforms and CI.
         return self.environment.strip().lower() in {"production", "prod"} or os.environ.get("RENDER", "").lower() == "true"
+
+    def database_url_with_timeout(self, timeout_seconds: int = 15) -> str:
+        """Return the PostgreSQL URL with a finite connection timeout."""
+        database_url = (self.database_url or "").strip()
+        parsed = urlparse(database_url)
+        if parsed.scheme not in {"postgresql", "postgresql+psycopg"}:
+            return database_url
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query.setdefault("connect_timeout", str(timeout_seconds))
+        return urlunparse(parsed._replace(query=urlencode(query)))
 
     def validate_startup(self) -> None:
         """Fail clearly before serving requests when production is misconfigured."""

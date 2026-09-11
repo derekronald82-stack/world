@@ -8,7 +8,10 @@ from app.db import Base
 from app import models  # noqa: F401 - registers ORM tables
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.database_url_with_timeout().replace("%", "%%"),
+)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
